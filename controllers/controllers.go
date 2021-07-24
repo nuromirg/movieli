@@ -1,12 +1,14 @@
 package controllers
 
 import (
+	"Movieli/service"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -27,18 +29,7 @@ type MovieStorage struct {
 	movies []Movie
 }
 
-func HelloHandler(w http.ResponseWriter, request *http.Request) {
-
-	name := strings.Replace(request.URL.Path, "/hello/", "", 1)
-
-	response := Resp{
-		Message: fmt.Sprintf("Hello, %s! Glad to see you.", name),
-	}
-	responseJson, _ := json.Marshal(response) //convert to json structure
-	w.WriteHeader(http.StatusOK)
-
-	w.Write(responseJson)
-}
+var idCounter uint64
 
 func Logger(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, request *http.Request) {
@@ -47,7 +38,7 @@ func Logger(next http.HandlerFunc) http.HandlerFunc {
 		next.ServeHTTP(w, request)
 	}
 }
-//middleware func
+//middleware auth until better times
 func BasicAuth(next http.HandlerFunc) http.HandlerFunc {
 	//login:pass
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
@@ -116,11 +107,21 @@ func handlerGetMovie(w http.ResponseWriter, r *http.Request){
 }
 
 func handlerAddMovie(w http.ResponseWriter, r *http.Request){
+	db := service.DBConnect()
+	idFindDB, err := db.Query("SELECT MAX(id) FROM Movieli")
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer idFindDB.Close()
+	for idFindDB.Next() {
+		idFindDB.Scan(&idCounter)
+	}
+	idCounter++
+	fmt.Printf("id: %d", idCounter)
 	decoder := json.NewDecoder(r.Body)
 	var movie Movie
 	var response Resp
-	err := decoder.Decode(&movie)
-
+	err = decoder.Decode(&movie)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		response.Error = err.Error()
@@ -128,6 +129,16 @@ func handlerAddMovie(w http.ResponseWriter, r *http.Request){
 		w.Write(responseJson)
 		return
 	}
+	movie.Id = strconv.FormatUint(idCounter, 10)
+	//idCounter++
+	insertForm, err := db.Prepare("INSERT INTO Movieli(id, poster, title, year, director) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		fmt.Println(err)
+	}
+	insertForm.Exec(movie.Id, movie.Poster, movie.Title, movie.Year, movie.Director)
+	log.Println("INSERT: id: " + movie.Id + ", poster: " + movie.Poster)
+	log.Println(", title: " + movie.Title + ", year: " + movie.Year + ", director: " + movie.Director)
+	defer db.Close()
 	err = movieStorage.AddMovies(movie)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -140,11 +151,25 @@ func handlerAddMovie(w http.ResponseWriter, r *http.Request){
 	MoviesHandler(w, r) //result
 }
 
-func handlerDeleteMovie(w http.ResponseWriter, r *http.Request) {
-	id := strings.Replace(r.URL.Path, "/movie/", "", 1)
-	var response Resp
-	err := movieStorage.DeleteMovie(id)
+func MovieDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete || r.Method == http.MethodPost {
+		handlerDeleteMovie(w, r)
+	}
+}
 
+func handlerDeleteMovie(w http.ResponseWriter, r *http.Request) {
+	db := service.DBConnect()
+	id := r.PostFormValue("deleteMovie")
+	var response Resp
+	/*err := movieStorage.DeleteMovie(id)
+	if err != nil {
+		fmt.Println(err)
+	}*/
+	deleteForm, err := db.Prepare("DELETE FROM Movieli WHERE id=?")
+	if err != nil {
+		fmt.Println(err)
+	}
+	deleteForm.Exec(id)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		response.Error = err.Error()
@@ -152,6 +177,7 @@ func handlerDeleteMovie(w http.ResponseWriter, r *http.Request) {
 		w.Write(responseJson)
 		return
 	}
+	deleteForm.Exec(id)
 	MoviesHandler(w, r)
 }
 
@@ -224,6 +250,7 @@ func (s *MovieStorage) UpdateMovie(movie Movie) error {
 }
 
 func (s *MovieStorage) DeleteMovie(id string) error {
+
 	for i, mv := range s.movies {
 		if mv.Id == id {
 			s.movies = append(s.movies[:i], s.movies[i+1:]...)
