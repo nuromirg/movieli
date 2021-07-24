@@ -1,7 +1,5 @@
 # Movieli
 
-[![Build Status](https://travis-ci.org/joemccann/dillinger.svg?branch=master)](https://travis-ci.org/joemccann/dillinger)
-
 Movieli is a service for storing a list of movies that you want to watch later.
 
   - Written on go 1.16
